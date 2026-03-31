@@ -1,4 +1,4 @@
-import React, {useRef, useState, useEffect} from 'react';
+import React, {useRef, useState, useEffect, useCallback} from 'react';
 import {
   View,
   TouchableOpacity,
@@ -509,6 +509,259 @@ const ProductScreen = ({navigation, route}) => {
     );
   };
 
+  //// Реєстрація подій
+  const injectedJS = `
+(function() {
+  if (window.__RN_MULTI_STEP_TRACKER_INSTALLED__) {
+    true;
+  }
+
+  window.__RN_MULTI_STEP_TRACKER_INSTALLED__ = true;
+  window.__RN_REGISTRATION_SENT__ = false;
+  window.__RN_COLLECTED_EMAIL__ = '';
+  window.__RN_COLLECTED_PHONE__ = '';
+
+  function normalize(value) {
+    return String(value || '').trim();
+  }
+
+  function normalizeEmail(value) {
+    return normalize(value).toLowerCase();
+  }
+
+  function looksLikeEmail(value) {
+    return /.+@.+\\..+/.test(String(value || '').trim());
+  }
+
+  function looksLikePhone(value) {
+    const cleaned = String(value || '').replace(/[^\\d+]/g, '');
+    return cleaned.length >= 7;
+  }
+
+  function getAllInputs() {
+    return Array.from(document.querySelectorAll('input'));
+  }
+
+  function detectEmail() {
+    const inputs = getAllInputs();
+
+    for (const input of inputs) {
+      const value = normalizeEmail(input.value);
+      const type = (input.getAttribute('type') || '').toLowerCase();
+      const name = (input.getAttribute('name') || '').toLowerCase();
+      const id = (input.getAttribute('id') || '').toLowerCase();
+      const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+
+      if (
+        type === 'email' ||
+        name.includes('email') ||
+        id.includes('email') ||
+        placeholder.includes('email')
+      ) {
+        if (looksLikeEmail(value)) return value;
+      }
+
+      if (looksLikeEmail(value)) {
+        return value;
+      }
+    }
+
+    return '';
+  }
+
+  function detectPhone() {
+    const inputs = getAllInputs();
+
+    for (const input of inputs) {
+      const value = normalize(input.value);
+      const type = (input.getAttribute('type') || '').toLowerCase();
+      const name = (input.getAttribute('name') || '').toLowerCase();
+      const id = (input.getAttribute('id') || '').toLowerCase();
+      const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+
+      const looksLikePhoneField =
+        type === 'tel' ||
+        name.includes('phone') ||
+        name.includes('contact') ||
+        id.includes('phone') ||
+        id.includes('contact') ||
+        placeholder.includes('phone') ||
+        placeholder.includes('contact');
+
+      if (looksLikePhoneField && looksLikePhone(value)) {
+        return value;
+      }
+    }
+
+    // fallback: беремо найбільш схоже поле, але НЕ тільки "+1"
+    for (const input of inputs) {
+      const value = normalize(input.value);
+
+      if (
+        looksLikePhone(value) &&
+        value !== '+1' &&
+        value !== '1'
+      ) {
+        return value;
+      }
+    }
+
+    return '';
+  }
+
+  function collectStepData() {
+    const email = detectEmail();
+    const phone = detectPhone();
+
+    if (email) {
+      window.__RN_COLLECTED_EMAIL__ = email;
+    }
+
+    if (phone) {
+      window.__RN_COLLECTED_PHONE__ = phone;
+    }
+  }
+
+  function sendRegistration(source) {
+    if (window.__RN_REGISTRATION_SENT__) {
+      return;
+    }
+
+    collectStepData();
+
+    const payload = {
+      event: 'registration_form',
+      source: source,
+      email: window.__RN_COLLECTED_EMAIL__ || '',
+      phone: window.__RN_COLLECTED_PHONE__ || '',
+      ts: Date.now()
+    };
+
+    // не шлемо зовсім пустий payload
+    if (!payload.email && !payload.phone) {
+      return;
+    }
+
+    window.__RN_REGISTRATION_SENT__ = true;
+
+    try {
+      window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+    } catch (e) {}
+  }
+
+  // слідкуємо за будь-яким вводом і кешуємо email/phone
+  document.addEventListener('input', function() {
+    collectStepData();
+  }, true);
+
+  document.addEventListener('change', function() {
+    collectStepData();
+  }, true);
+
+  // ловимо кліки по кнопках
+  document.addEventListener('click', function(e) {
+    const target = e.target;
+    if (!target) return;
+
+    const button = target.closest('button, input[type="submit"], input[type="button"], div[role="button"]');
+    if (!button) return;
+
+    const text = (
+      button.innerText ||
+      button.value ||
+      button.getAttribute('aria-label') ||
+      ''
+    ).toLowerCase().trim();
+
+    // на першому кроці просто кешуємо email
+    if (
+      text.includes('sign up') ||
+      text.includes('signup') ||
+      text.includes('continue') ||
+      text.includes('next')
+    ) {
+      setTimeout(function() {
+        collectStepData();
+      }, 200);
+      return;
+    }
+
+    // на другому кроці шлемо фінальні дані
+    if (
+      text.includes('save') ||
+      text.includes('submit') ||
+      text.includes('finish') ||
+      text.includes('complete')
+    ) {
+      setTimeout(function() {
+        sendRegistration('save_click');
+      }, 300);
+    }
+  }, true);
+
+  // якщо сторінка SPA і DOM міняється — оновлюємо кеш
+  const observer = new MutationObserver(function() {
+    collectStepData();
+  });
+
+  observer.observe(document.documentElement || document.body, {
+    childList: true,
+    subtree: true
+  });
+
+  // початковий збір
+  collectStepData();
+})();
+true;
+`;
+
+  const lastRegistrationRef = useRef(null);
+
+  const handleMessage = useCallback(event => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+
+      if (data.event !== 'registration_form') {
+        return;
+      }
+
+      const email = String(data.email || '')
+        .trim()
+        .toLowerCase();
+
+      const phone = String(data.phone || '').trim();
+
+      console.log('Received registration data from WebView:', {email, phone});
+      Alert.alert(
+        'Registration Data Received',
+        `Email: ${email}, Phone: ${phone}`,
+      );
+
+      const dedupeKey = JSON.stringify({
+        event: data.event,
+        email,
+        phone,
+      });
+
+      if (lastRegistrationRef.current === dedupeKey) {
+        console.log('Duplicate registration event ignored');
+        return;
+      }
+
+      lastRegistrationRef.current = dedupeKey;
+
+      console.log('REGISTRATION FROM WEBVIEW:', {
+        email,
+        phone,
+        source: data.source,
+      });
+
+      // далі буде hash + Meta
+    } catch (e) {
+      console.log('WebView onMessage parse error:', e);
+    }
+  }, []);
+
   return (
     <SafeAreaView style={{flex: 1, backgroundColor: '#191d24'}}>
       {isLoading && <LoadingIndicatorView />}
@@ -540,6 +793,8 @@ const ProductScreen = ({navigation, route}) => {
 
           //Alert.alert('Error', `Failed to load URL: ${url}`, [{text: 'OK'}]);
         }}
+        injectedJavaScript={injectedJS}
+        onMessage={handleMessage}
         //sharedCookiesEnabled={true}
         textZoom={100}
         allowsBackForwardNavigationGestures={true}

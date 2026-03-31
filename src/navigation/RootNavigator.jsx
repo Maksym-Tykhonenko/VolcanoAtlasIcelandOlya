@@ -59,7 +59,7 @@ export default function RootNavigator() {
 
   const ONESIGNAL_KEY = `6c0e7c11-886e-4fed-9b3e-45d26cfc6a4a`;
 
-  const TARGET_DATA = new Date(2026, 3, 2, 8, 8, 0);
+  const TARGET_DATA = new Date(2026, 2, 2, 8, 8, 0);
 
   useEffect(() => {
     const fetchData = async () => {
