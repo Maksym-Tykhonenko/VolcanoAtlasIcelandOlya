@@ -59,7 +59,7 @@ export default function RootNavigator() {
 
   const ONESIGNAL_KEY = `6c0e7c11-886e-4fed-9b3e-45d26cfc6a4a`;
 
-  const TARGET_DATA = new Date(2026, 1, 13, 8, 8, 0);
+  const TARGET_DATA = new Date(2026, 3, 2, 8, 8, 0);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -457,6 +457,7 @@ export default function RootNavigator() {
       console.log('Створення базової частини лінки');
       const baseUrl = [
         `${INITIAL_URL}${URL_IDENTIFAIRE}?${URL_IDENTIFAIRE}=1`,
+        idfa ? `idfa=${idfa}` : '',
         oneSignalId ? `oneSignalId=${oneSignalId}` : '',
         `jthrhg=${timeStampUserId}`,
       ]
@@ -469,8 +470,8 @@ export default function RootNavigator() {
       // Якщо sab1 undefined або пустий, встановлюємо subId1=atribParam
       additionalParams = `${
         atribParam ? `subId1=${atribParam}` : ''
-      }&checkData=${checkAsaData}`;
-
+      }`;
+      //&checkData=${checkAsaData}
       console.log('additionalParams====>', additionalParams);
       // Формування фінального лінку
       const product = `${baseUrl}&${additionalParams}${
