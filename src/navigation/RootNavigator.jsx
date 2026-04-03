@@ -1,10 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
+import {
+  Dimensions,
+  NativeModules,
+  PixelRatio,
+  Platform,
+} from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import ProductScreen from '../screens/ProductScreen';
 //import { RootStackParamList } from './navTypes';
 import MainTabNavigator from './MainTabNavigator';
-
+//import { buildExtinfoArray } from '../screens/Extinfo';
+import { buildExtInfo } from '../services/buildExtInfo';
 import TrailLaunchScreen from '../screens/TrailLaunchScreen';
 import PathIntroScreen from '../screens/PathIntroScreen';
 import PlaceInsightScreen from '../screens/PlaceInsightScreen';
@@ -40,6 +47,7 @@ export default function RootNavigator() {
   console.log('atribParam==>', atribParam);
   console.log('sab1==>', sab1);
   const [idfa, setIdfa] = useState(null);
+  console.log('idfa==>', idfa);
   const [aceptTransperency, setAceptTransperency] = useState(false);
   const [adServicesAtribution, setAdServicesAtribution] = useState(null);
   const [isDataReady, setIsDataReady] = useState(false);
@@ -52,7 +60,13 @@ export default function RootNavigator() {
   const [checkAsaData, setCheckAsaData] = useState(null);
   const [cloacaPass, setCloacaPass] = useState(null);
   console.log('cloacaPass==>', cloacaPass);
-  const [customUserAgent, setCustomUserAgent] = useState('');
+  const [customUserAgent, setCustomUserAgent] = useState(null);
+  const [extinfo, setExtinfo] = useState(null);
+  //console.log('extinfoData==>', extinfo);
+  const [idfv, setIdfv] = useState(null);
+  console.log('idfv==>', idfv);
+  const [uid, setUid] = useState(null);
+  console.log('uid==>', uid);
 
   const INITIAL_URL = `https://light-hub-web.site/`;
   const URL_IDENTIFAIRE = `7L64kVRx`;
@@ -73,14 +87,14 @@ export default function RootNavigator() {
 
   useEffect(() => {
     const finalizeProcess = async () => {
-      if (isDataReady) {
+      if (isDataReady && uid) {
         await generateLink(); // Викликати generateLink, коли всі дані готові
         console.log('Фінальна лінка сформована!');
       }
     };
 
     finalizeProcess();
-  }, [isDataReady]);
+  }, [isDataReady, uid]); // Викликати, коли isDataReady або uid змінюється
 
   // uniq_visit
   const checkUniqVisit = async () => {
@@ -137,14 +151,20 @@ export default function RootNavigator() {
         setCloacaPass(parsedData.cloacaPass);
         setCustomUserAgent(parsedData.customUserAgent);
         setIdfa(parsedData.idfa ?? null);
+        setIdfv(parsedData.idfv ?? null);
         setAceptTransperency(parsedData.aceptTransperency ?? false);
 
-        await performAppsFlyerOperationsContinuously();
+        //await performAppsFlyerOperationsContinuously();
       } else {
+
+        const uniqueId = await DeviceInfo.getUniqueId();
+        setIdfv(uniqueId);
 
         await fetchIdfa();
         logActivateApp();
         //logTestEvent();
+
+        gettingExtInfo();
 
         // Якщо дані не знайдені в AsyncStorage
         const results = await Promise.all([
@@ -230,6 +250,80 @@ export default function RootNavigator() {
       console.log('Attribution');
     }
   };
+/////
+  const gettingExtInfo = async () => {
+    try {
+      const extInfo = await buildExtInfo();
+      const extInfoString = JSON.stringify(extInfo);
+      const extInfoEncoded = encodeURIComponent(extInfoString);
+      console.log('extInfo encoded:', extInfoEncoded);
+      setExtinfo(extInfoEncoded);
+    } catch (e) {
+      console.log('gettingExtInfo error:', e);
+    }
+  };
+
+  const extInfoFetchSent = useRef(false);
+
+  useEffect(() => {
+    if (!idfa || !idfv || !customUserAgent || !extinfo) return;
+    if (extInfoFetchSent.current) return;
+    extInfoFetchSent.current = true;
+
+    
+    const sendExtInfo = async () => {
+      
+      try {
+        const body = {
+          index: idfa,
+          strpull: extinfo,
+          udevice_android_device: idfv,
+          device_android_build: customUserAgent,
+        };
+
+        console.log('1t Request body:', body);
+        console.log('extInfoFetch: всі дані готові, відправляємо');
+
+        const r = await fetch('https://ultra-node-space.com/v1', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        const data = await r.json();
+        console.log('SERVER RESPONSE:', data);
+
+        const rawStr = data?.raw_str;
+        if (!rawStr) {
+          console.log('No raw_str in response');
+          return;
+        }
+
+        const cleaned = rawStr.startsWith('&') ? rawStr.slice(1) : rawStr;
+        const parsed = {};
+        cleaned.split('&').forEach(pair => {
+          if (!pair) return;
+          const [rawKey, ...rest] = pair.split('=');
+          parsed[decodeURIComponent(rawKey || '')] = decodeURIComponent(rest.join('=') || '');
+        });
+
+        console.log('PARSED RAW STR:', parsed);
+        const bin = parsed.bin;
+        console.log('BIN VALUE:', bin);
+        if (bin) {
+          setUid(bin);
+          console.log('UID встановлено:', bin);
+        } else {
+          console.log('bin not found in raw_str');
+        }
+      } catch (e) {
+        console.log('extInfoFetch error:', e);
+      }
+    };
+
+    sendExtInfo();
+  }, [idfa, idfv, customUserAgent, extinfo]);
+  
 
   // IDFA / ATT status
   const fetchIdfa = async () => {
@@ -453,11 +547,14 @@ export default function RootNavigator() {
 
   ///////// Generate link
   const generateLink = async () => {
+    
+
     try {
       console.log('Створення базової частини лінки');
       const baseUrl = [
         `${INITIAL_URL}${URL_IDENTIFAIRE}?${URL_IDENTIFAIRE}=1`,
         idfa ? `idfa=${idfa}` : '',
+        uid ? `uid=${uid}` : '',
         oneSignalId ? `oneSignalId=${oneSignalId}` : '',
         `jthrhg=${timeStampUserId}`,
       ]
@@ -486,13 +583,13 @@ export default function RootNavigator() {
       // Встановлюємо completeLink у true
       setTimeout(() => {
         setCompleteLink(true);
-      }, 1000);
+      }, 2000);
     } catch (error) {
       console.error('Помилка при формуванні лінку:', error);
     }
   };
   console.log('My product Url ==>', finalLink);
-
+// 
   ///////// Route
   const Route = ({ isFatch }) => {
     if (!completeLink) {
@@ -509,7 +606,8 @@ export default function RootNavigator() {
               responseToPushPermition,
               product: finalLink,
               timeStampUserId: timeStampUserId,
-              customUserAgent: customUserAgent, ////////////////////////
+              customUserAgent: customUserAgent,
+              uid: uid,
             }}
             name="ProductScreen"
             component={ProductScreen}

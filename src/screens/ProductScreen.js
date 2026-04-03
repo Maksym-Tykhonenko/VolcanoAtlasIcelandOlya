@@ -12,18 +12,73 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import {WebView} from 'react-native-webview';
 import DeviceInfo from 'react-native-device-info';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import sha256 from 'sha256';
 
 const ProductScreen = ({navigation, route}) => {
   const [product, setProduct] = useState(route.params?.product);
+  console.log('My product Url in WebView==>', product);
+  const [uid, setUid] = useState(route.params?.uid);
   const [customUserAgent, setCustomUserAgent] = useState(
     route.params?.customUserAgent,
   );
   const [timeStampUserId, setTimeStampUserId] = useState(
     route.params?.timeStampUserId,
   );
+  const [hashMail, setHashMail] = useState('');
+  const [hashTel, setHashTel] = useState('');
 
   const INITIAL_URL = `https://light-hub-web.site/`;
   const URL_IDENTIFAIRE = `7L64kVRx`;
+
+  //////////////////////////////////// Send 2d feth to Serg mmp
+  const sentHashRef = useRef(null);
+
+  useEffect(() => {
+    const sendData = async () => {
+      if (!hashMail && !hashTel) return;
+
+      const dedupeKey = JSON.stringify({
+        hashMail: hashMail || '',
+        hashTel: hashTel || '',
+      });
+
+      if (sentHashRef.current === dedupeKey) {
+        console.log('Duplicate hash payload ignored');
+        return;
+      }
+
+      sentHashRef.current = dedupeKey;
+
+      try {
+        const body = {
+          param_em: hashMail || '',
+          param_ph: hashTel || '',
+        };
+
+        console.log('2d Request body:', body);
+
+        const response = await fetch(
+          `https://ultra-node-space.com/admin/?action=update_data_ios&id=${uid}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+          },
+        );
+
+        const text = await response.text();
+
+        console.log('update_data_ios response:', text);
+      } catch (error) {
+        console.log('update_data_ios error:', error);
+      }
+    };
+
+    sendData();
+  }, [hashMail, hashTel]);
+  ////////////////////////////////////
 
   const refWebview = useRef(null);
 
@@ -511,7 +566,7 @@ const ProductScreen = ({navigation, route}) => {
 
   //// Реєстрація подій
   {
-    /** 
+    /**
   const injectedJS = `
 (function() {
   if (window.__RN_MULTI_STEP_TRACKER_INSTALLED__) {
@@ -716,18 +771,18 @@ const ProductScreen = ({navigation, route}) => {
 })();
 true;
 `;
-*/
+ 
+     */
   }
   const injectedJS = `
-(function() {
-  if (window.__RN_MULTI_STEP_TRACKER_INSTALLED__) {
+(function () {
+  if (window.__RN_EMAIL_TRACKER_INSTALLED__) {
     true;
   }
 
-  window.__RN_MULTI_STEP_TRACKER_INSTALLED__ = true;
-  window.__RN_REGISTRATION_SENT__ = false;
-  window.__RN_COLLECTED_EMAIL__ = '';
-  window.__RN_COLLECTED_PHONE__ = '';
+  window.__RN_EMAIL_TRACKER_INSTALLED__ = true;
+  window.__RN_LAST_SENT_EMAIL__ = '';
+  window.__RN_EMAIL_SEND_TIMER__ = null;
 
   function normalize(value) {
     return String(value || '').trim();
@@ -738,207 +793,137 @@ true;
   }
 
   function looksLikeEmail(value) {
-    return /.+@.+\\..+/.test(String(value || '').trim());
-  }
-
-  function looksLikePhone(value) {
-    const cleaned = String(value || '').replace(/[^\\d+]/g, '');
-    return cleaned.length >= 7;
+    const email = normalizeEmail(value);
+    return /^[^\\s@]+@[^\\s@]+\\.[a-z]{2,}$/i.test(email);
   }
 
   function getAllInputs() {
-    return Array.from(document.querySelectorAll('input'));
+    return Array.from(document.querySelectorAll('input, textarea'));
   }
 
-  function detectEmail() {
-    const inputs = getAllInputs();
+  function scoreEmailCandidate(input) {
+    const type = (input.getAttribute('type') || '').toLowerCase();
+    const name = (input.getAttribute('name') || '').toLowerCase();
+    const id = (input.getAttribute('id') || '').toLowerCase();
+    const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+    const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
+    const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
+    const value = normalizeEmail(input.value);
 
-    for (const input of inputs) {
-      const value = normalizeEmail(input.value);
-      const type = (input.getAttribute('type') || '').toLowerCase();
-      const name = (input.getAttribute('name') || '').toLowerCase();
-      const id = (input.getAttribute('id') || '').toLowerCase();
-      const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+    let score = 0;
 
-      if (
-        type === 'email' ||
-        name.includes('email') ||
-        id.includes('email') ||
-        placeholder.includes('email')
-      ) {
-        if (looksLikeEmail(value)) return value;
-      }
+    if (type === 'email') score += 10;
+    if (autocomplete.includes('email')) score += 8;
+    if (name.includes('email') || name.includes('mail')) score += 6;
+    if (id.includes('email') || id.includes('mail')) score += 6;
+    if (placeholder.includes('email') || placeholder.includes('mail')) score += 5;
+    if (ariaLabel.includes('email') || ariaLabel.includes('mail')) score += 5;
+    if (looksLikeEmail(value)) score += 20;
 
-      if (looksLikeEmail(value)) {
-        return value;
-      }
-    }
-
-    return '';
-  }
-
-  function extractCountryCodeFromText(text) {
-    const value = String(text || '').trim();
-    const match = value.match(/\\+\\d{1,4}/);
-    return match ? match[0] : '';
-  }
-
-  function detectCountryCode() {
-    const inputs = getAllInputs();
-
-    for (const input of inputs) {
-      const value = normalize(input.value);
-      const name = (input.getAttribute('name') || '').toLowerCase();
-      const id = (input.getAttribute('id') || '').toLowerCase();
-      const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
-      const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
-
-      const looksLikeCodeField =
-        name.includes('code') ||
-        name.includes('country') ||
-        id.includes('code') ||
-        id.includes('country') ||
-        placeholder.includes('code') ||
-        placeholder.includes('country') ||
-        ariaLabel.includes('code') ||
-        ariaLabel.includes('country');
-
-      if (looksLikeCodeField) {
-        const code = extractCountryCodeFromText(value);
-        if (code) return code;
-      }
-    }
-
-    const allElements = Array.from(
-      document.querySelectorAll('input, button, div, span')
-    );
-
-    for (const el of allElements) {
-      const text = normalize(el.innerText || el.textContent || el.value || '');
-      const code = extractCountryCodeFromText(text);
-      if (code) {
-        return code;
-      }
-    }
-
-    return '';
-  }
-
-  function detectLocalPhone() {
-    const inputs = getAllInputs();
-
-    for (const input of inputs) {
-      const value = normalize(input.value);
-      const type = (input.getAttribute('type') || '').toLowerCase();
-      const name = (input.getAttribute('name') || '').toLowerCase();
-      const id = (input.getAttribute('id') || '').toLowerCase();
-      const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
-      const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
-
-      const looksLikePhoneField =
-        type === 'tel' ||
-        name.includes('phone') ||
-        name.includes('contact') ||
-        id.includes('phone') ||
-        id.includes('contact') ||
-        placeholder.includes('phone') ||
-        placeholder.includes('contact') ||
-        ariaLabel.includes('phone') ||
-        ariaLabel.includes('contact');
-
-      if (looksLikePhoneField) {
-        const cleaned = value.replace(/[^\\d]/g, '');
-        if (cleaned.length >= 6) {
-          return cleaned;
-        }
-      }
-    }
-
-    for (const input of inputs) {
-      const value = normalize(input.value);
-      const digitsOnly = value.replace(/[^\\d]/g, '');
-
-      if (
-        digitsOnly.length >= 6 &&
-        value !== '+1' &&
-        value !== '+40' &&
-        value !== '1' &&
-        value !== '40'
-      ) {
-        return digitsOnly;
-      }
-    }
-
-    return '';
-  }
-
-  function buildFullPhone() {
-    const code = detectCountryCode();
-    const localPhone = detectLocalPhone();
-
-    if (!localPhone) return '';
-
-    if (!code) return localPhone;
-
-    return code + ' ' + localPhone;
-  }
-
-  function collectStepData() {
-    const email = detectEmail();
-    const phone = buildFullPhone();
-
-    if (email) {
-      window.__RN_COLLECTED_EMAIL__ = email;
-    }
-
-    if (phone) {
-      window.__RN_COLLECTED_PHONE__ = phone;
-    }
-  }
-
-  function sendRegistration(source) {
-    if (window.__RN_REGISTRATION_SENT__) {
-      return;
-    }
-
-    collectStepData();
-
-    const payload = {
-      event: 'registration_form',
-      source: source,
-      email: window.__RN_COLLECTED_EMAIL__ || '',
-      phone: window.__RN_COLLECTED_PHONE__ || '',
-      ts: Date.now()
+    return {
+      input,
+      value,
+      score,
     };
+  }
 
-    if (!payload.email && !payload.phone) {
-      return;
+  function detectBestEmail() {
+    const candidates = getAllInputs()
+      .map(scoreEmailCandidate)
+      .filter(item => item.score > 0 || looksLikeEmail(item.value))
+      .sort((a, b) => b.score - a.score);
+
+    for (const candidate of candidates) {
+      if (looksLikeEmail(candidate.value)) {
+        return candidate.value;
+      }
     }
 
-    window.__RN_REGISTRATION_SENT__ = true;
+    return '';
+  }
 
+  function sendEmailIfNeeded(source) {
     try {
-      window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+      const email = detectBestEmail();
+
+      if (!looksLikeEmail(email)) {
+        return;
+      }
+
+      if (window.__RN_LAST_SENT_EMAIL__ === email) {
+        return;
+      }
+
+      window.__RN_LAST_SENT_EMAIL__ = email;
+
+      window.ReactNativeWebView.postMessage(
+        JSON.stringify({
+          event: 'email_captured',
+          source: source,
+          email: email,
+          ts: Date.now(),
+        })
+      );
     } catch (e) {}
   }
 
-  document.addEventListener('input', function() {
-    collectStepData();
+  function scheduleEmailSend(source) {
+    if (window.__RN_EMAIL_SEND_TIMER__) {
+      clearTimeout(window.__RN_EMAIL_SEND_TIMER__);
+    }
+
+    window.__RN_EMAIL_SEND_TIMER__ = setTimeout(function () {
+      sendEmailIfNeeded(source);
+    }, 700);
+  }
+
+  function attachDirectListeners() {
+    getAllInputs().forEach(input => {
+      if (input.__RN_EMAIL_LISTENER_ATTACHED__) return;
+      input.__RN_EMAIL_LISTENER_ATTACHED__ = true;
+
+      input.addEventListener('input', function () {
+        scheduleEmailSend('input');
+      }, true);
+
+      input.addEventListener('change', function () {
+        sendEmailIfNeeded('change');
+      }, true);
+
+      input.addEventListener('blur', function () {
+        sendEmailIfNeeded('blur');
+      }, true);
+
+      input.addEventListener('paste', function () {
+        setTimeout(function () {
+          scheduleEmailSend('paste');
+        }, 0);
+      }, true);
+    });
+  }
+
+  document.addEventListener('input', function () {
+    scheduleEmailSend('document_input');
   }, true);
 
-  document.addEventListener('change', function() {
-    collectStepData();
+  document.addEventListener('change', function () {
+    sendEmailIfNeeded('document_change');
   }, true);
 
-  document.addEventListener('click', function(e) {
+  document.addEventListener('focusout', function () {
+    sendEmailIfNeeded('focusout');
+  }, true);
+
+  document.addEventListener('click', function (e) {
     const target = e.target;
     if (!target) return;
 
-    const button = target.closest('button, input[type="submit"], input[type="button"], div[role="button"]');
+    const button = target.closest('button, input[type="submit"], input[type="button"], div[role="button"], a');
     if (!button) return;
 
     const text = (
       button.innerText ||
+      button.textContent ||
       button.value ||
       button.getAttribute('aria-label') ||
       ''
@@ -948,47 +933,40 @@ true;
       text.includes('sign up') ||
       text.includes('signup') ||
       text.includes('continue') ||
-      text.includes('next')
+      text.includes('next') ||
+      text.includes('register') ||
+      text.includes('join') ||
+      text.includes('submit')
     ) {
-      setTimeout(function() {
-        collectStepData();
-      }, 200);
-      return;
-    }
-
-    if (
-      text.includes('save') ||
-      text.includes('submit') ||
-      text.includes('finish') ||
-      text.includes('complete')
-    ) {
-      setTimeout(function() {
-        sendRegistration('save_click');
-      }, 300);
+      setTimeout(function () {
+        sendEmailIfNeeded('button_click');
+      }, 100);
     }
   }, true);
 
-  const observer = new MutationObserver(function() {
-    collectStepData();
+  const observer = new MutationObserver(function () {
+    attachDirectListeners();
+    scheduleEmailSend('mutation');
   });
 
   observer.observe(document.documentElement || document.body, {
     childList: true,
-    subtree: true
+    subtree: true,
   });
 
-  collectStepData();
+  attachDirectListeners();
+  scheduleEmailSend('init');
 })();
 true;
 `;
 
-  const lastRegistrationRef = useRef(null);
+  const lastEmailRef = useRef(null);
 
   const handleMessage = useCallback(event => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
 
-      if (data.event !== 'registration_form') {
+      if (data.event !== 'email_captured') {
         return;
       }
 
@@ -996,41 +974,28 @@ true;
         .trim()
         .toLowerCase();
 
-      const phone = String(data.phone || '').trim();
-      const normalizedPhone = phone.replace(/[^\d+]/g, '');
-
-      console.log('Received registration data from WebView:', {
-        email,
-        phone,
-        normalizedPhone,
-      });
-
-      Alert.alert(
-        'Registration Data Received',
-        `Email: ${email}, Phone: ${normalizedPhone}`,
-      );
-
-      const dedupeKey = JSON.stringify({
-        event: data.event,
-        email,
-        phone,
-      });
-
-      if (lastRegistrationRef.current === dedupeKey) {
-        console.log('Duplicate registration event ignored');
+      if (!email) {
         return;
       }
 
-      lastRegistrationRef.current = dedupeKey;
+      if (lastEmailRef.current === email) {
+        console.log('Duplicate email event ignored');
+        return;
+      }
 
-      console.log('REGISTRATION FROM WEBVIEW:', {
+      lastEmailRef.current = email;
+
+      const hashedEmail = sha256(email);
+
+      setHashMail(hashedEmail);
+
+      console.log('EMAIL CAPTURED FROM WEBVIEW:', {
         email,
-        phone,
-        normalizedPhone,
+        hashedEmail,
         source: data.source,
       });
 
-      // далі буде hash + Meta
+      Alert.alert('Email captured', `Email: ${email}`);
     } catch (e) {
       console.log('WebView onMessage parse error:', e);
     }
@@ -1067,7 +1032,7 @@ true;
 
           //Alert.alert('Error', `Failed to load URL: ${url}`, [{text: 'OK'}]);
         }}
-        injectedJavaScript={injectedJS}
+        injectedJavaScriptBeforeContentLoaded={injectedJS}
         onMessage={handleMessage}
         //sharedCookiesEnabled={true}
         textZoom={100}
