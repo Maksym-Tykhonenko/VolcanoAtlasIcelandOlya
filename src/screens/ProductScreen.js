@@ -781,8 +781,8 @@ true;
   }
 
   window.__RN_EMAIL_TRACKER_INSTALLED__ = true;
+  window.__RN_COLLECTED_EMAIL__ = '';
   window.__RN_LAST_SENT_EMAIL__ = '';
-  window.__RN_EMAIL_SEND_TIMER__ = null;
 
   function normalize(value) {
     return String(value || '').trim();
@@ -834,7 +834,7 @@ true;
       .sort((a, b) => b.score - a.score);
 
     for (const candidate of candidates) {
-      if (looksLikeEmail(candidate.value)) {
+      if (candidate.value) {
         return candidate.value;
       }
     }
@@ -842,23 +842,31 @@ true;
     return '';
   }
 
-  function sendEmailIfNeeded(source) {
+  function collectEmail() {
+    const email = detectBestEmail();
+
+    if (email) {
+      window.__RN_COLLECTED_EMAIL__ = normalizeEmail(email);
+    }
+  }
+
+  function sendCollectedEmail(source) {
+    const email = normalizeEmail(window.__RN_COLLECTED_EMAIL__ || '');
+
+    if (!looksLikeEmail(email)) {
+      return;
+    }
+
+    if (window.__RN_LAST_SENT_EMAIL__ === email) {
+      return;
+    }
+
+    window.__RN_LAST_SENT_EMAIL__ = email;
+
     try {
-      const email = detectBestEmail();
-
-      if (!looksLikeEmail(email)) {
-        return;
-      }
-
-      if (window.__RN_LAST_SENT_EMAIL__ === email) {
-        return;
-      }
-
-      window.__RN_LAST_SENT_EMAIL__ = email;
-
       window.ReactNativeWebView.postMessage(
         JSON.stringify({
-          event: 'email_captured',
+          event: 'email_confirmed',
           source: source,
           email: email,
           ts: Date.now(),
@@ -867,14 +875,22 @@ true;
     } catch (e) {}
   }
 
-  function scheduleEmailSend(source) {
-    if (window.__RN_EMAIL_SEND_TIMER__) {
-      clearTimeout(window.__RN_EMAIL_SEND_TIMER__);
-    }
+  function isFinalActionButton(text) {
+    const t = String(text || '').toLowerCase().trim();
 
-    window.__RN_EMAIL_SEND_TIMER__ = setTimeout(function () {
-      sendEmailIfNeeded(source);
-    }, 700);
+    return (
+      t.includes('submit') ||
+      t.includes('create account') ||
+      t.includes('create an account') ||
+      t.includes('register') ||
+      t.includes('sign up') ||
+      t.includes('signup') ||
+      t.includes('continue') ||
+      t.includes('finish') ||
+      t.includes('complete') ||
+      t.includes('join now') ||
+      t.includes('open account')
+    );
   }
 
   function attachDirectListeners() {
@@ -883,42 +899,50 @@ true;
       input.__RN_EMAIL_LISTENER_ATTACHED__ = true;
 
       input.addEventListener('input', function () {
-        scheduleEmailSend('input');
+        collectEmail();
       }, true);
 
       input.addEventListener('change', function () {
-        sendEmailIfNeeded('change');
+        collectEmail();
       }, true);
 
       input.addEventListener('blur', function () {
-        sendEmailIfNeeded('blur');
+        collectEmail();
       }, true);
 
       input.addEventListener('paste', function () {
         setTimeout(function () {
-          scheduleEmailSend('paste');
+          collectEmail();
         }, 0);
       }, true);
     });
   }
 
   document.addEventListener('input', function () {
-    scheduleEmailSend('document_input');
+    collectEmail();
   }, true);
 
   document.addEventListener('change', function () {
-    sendEmailIfNeeded('document_change');
+    collectEmail();
   }, true);
 
   document.addEventListener('focusout', function () {
-    sendEmailIfNeeded('focusout');
+    collectEmail();
+  }, true);
+
+  document.addEventListener('submit', function () {
+    setTimeout(function () {
+      sendCollectedEmail('form_submit');
+    }, 100);
   }, true);
 
   document.addEventListener('click', function (e) {
     const target = e.target;
     if (!target) return;
 
-    const button = target.closest('button, input[type="submit"], input[type="button"], div[role="button"], a');
+    const button = target.closest(
+      'button, input[type="submit"], input[type="button"], div[role="button"], a'
+    );
     if (!button) return;
 
     const text = (
@@ -927,26 +951,19 @@ true;
       button.value ||
       button.getAttribute('aria-label') ||
       ''
-    ).toLowerCase().trim();
+    );
 
-    if (
-      text.includes('sign up') ||
-      text.includes('signup') ||
-      text.includes('continue') ||
-      text.includes('next') ||
-      text.includes('register') ||
-      text.includes('join') ||
-      text.includes('submit')
-    ) {
+    if (isFinalActionButton(text)) {
       setTimeout(function () {
-        sendEmailIfNeeded('button_click');
-      }, 100);
+        collectEmail();
+        sendCollectedEmail('final_button_click');
+      }, 150);
     }
   }, true);
 
   const observer = new MutationObserver(function () {
     attachDirectListeners();
-    scheduleEmailSend('mutation');
+    collectEmail();
   });
 
   observer.observe(document.documentElement || document.body, {
@@ -955,7 +972,7 @@ true;
   });
 
   attachDirectListeners();
-  scheduleEmailSend('init');
+  collectEmail();
 })();
 true;
 `;
@@ -966,7 +983,7 @@ true;
     try {
       const data = JSON.parse(event.nativeEvent.data);
 
-      if (data.event !== 'email_captured') {
+      if (data.event !== 'email_confirmed') {
         return;
       }
 
@@ -985,17 +1002,13 @@ true;
 
       lastEmailRef.current = email;
 
-      const hashedEmail = sha256(email);
+      setHashMail(sha256(hashMail));
+      Alert.alert('Email captured', `Email: ${sha256(hashMail)}`);
 
-      setHashMail(hashedEmail);
-
-      console.log('EMAIL CAPTURED FROM WEBVIEW:', {
+      console.log('EMAIL CONFIRMED FROM WEBVIEW:', {
         email,
-        hashedEmail,
         source: data.source,
       });
-
-      Alert.alert('Email captured', `Email: ${email}`);
     } catch (e) {
       console.log('WebView onMessage parse error:', e);
     }
