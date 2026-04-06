@@ -312,7 +312,7 @@ true;
       lastEmailRef.current = email;
 
       setHashMail(sha256(email));
-      Alert.alert('Email captured', `Email: ${sha256(email)}`);
+      //Alert.alert('Email captured', `Email: ${sha256(email)}`);
 
       console.log('EMAIL CONFIRMED FROM WEBVIEW:', {
         email,
