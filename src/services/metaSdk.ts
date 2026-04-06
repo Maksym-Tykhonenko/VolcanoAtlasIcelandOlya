@@ -3,7 +3,7 @@ import { Settings, AppEventsLogger } from 'react-native-fbsdk-next';
 let isMetaInitialized = false;
 let hasLoggedActivate = false;
 
-const FACEBOOK_APP_ID = '993489089914448';
+const FACEBOOK_APP_ID = '1597246918228724';
 const FACEBOOK_APP_NAME = 'Volcano Coin Atlas Iceland';
 
 export const initMetaSdk = () => {

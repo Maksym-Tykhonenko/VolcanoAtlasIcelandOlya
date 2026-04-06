@@ -25,16 +25,16 @@
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>fb993489089914448</string>
+				<string>fb1597246918228724</string>
 			</array>
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>8</string>
+	<string>9</string>
 	<key>FacebookAppID</key>
-	<string>993489089914448</string>
+	<string>1597246918228724</string>
 	<key>FacebookClientToken</key>
-	<string>272e82fcad298eef9a2c7f73ec43e732</string>
+	<string>c56724863ca55b50e6ee89ac1327173b</string>
 	<key>FacebookDisplayName</key>
 	<string>Volcano Coin Atlas Iceland</string>
 	<key>LSApplicationQueriesSchemes</key>

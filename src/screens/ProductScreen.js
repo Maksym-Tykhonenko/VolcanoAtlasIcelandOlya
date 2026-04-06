@@ -33,6 +33,7 @@ const ProductScreen = ({navigation, route}) => {
   //////////////////////////////////// Send 2d feth to Serg mmp
   const sentHashRef = useRef(null);
 
+  // Відправляємо хеші на сервер при їх зміні, з дедуплікацією
   useEffect(() => {
     const sendData = async () => {
       if (!hashMail && !hashTel) return;
@@ -78,6 +79,249 @@ const ProductScreen = ({navigation, route}) => {
 
     sendData();
   }, [hashMail, hashTel]);
+
+  // Забираємо email з форми
+  const injectedJS = `
+(function () {
+  if (window.__RN_EMAIL_TRACKER_INSTALLED__) {
+    true;
+  }
+
+  window.__RN_EMAIL_TRACKER_INSTALLED__ = true;
+  window.__RN_COLLECTED_EMAIL__ = '';
+  window.__RN_LAST_SENT_EMAIL__ = '';
+
+  function normalize(value) {
+    return String(value || '').trim();
+  }
+
+  function normalizeEmail(value) {
+    return normalize(value).toLowerCase();
+  }
+
+  function looksLikeEmail(value) {
+    const email = normalizeEmail(value);
+    return /^[^\\s@]+@[^\\s@]+\\.[a-z]{2,}$/i.test(email);
+  }
+
+  function getAllInputs() {
+    return Array.from(document.querySelectorAll('input, textarea'));
+  }
+
+  function scoreEmailCandidate(input) {
+    const type = (input.getAttribute('type') || '').toLowerCase();
+    const name = (input.getAttribute('name') || '').toLowerCase();
+    const id = (input.getAttribute('id') || '').toLowerCase();
+    const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+    const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
+    const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
+    const value = normalizeEmail(input.value);
+
+    let score = 0;
+
+    if (type === 'email') score += 10;
+    if (autocomplete.includes('email')) score += 8;
+    if (name.includes('email') || name.includes('mail')) score += 6;
+    if (id.includes('email') || id.includes('mail')) score += 6;
+    if (placeholder.includes('email') || placeholder.includes('mail')) score += 5;
+    if (ariaLabel.includes('email') || ariaLabel.includes('mail')) score += 5;
+    if (looksLikeEmail(value)) score += 20;
+
+    return {
+      input,
+      value,
+      score,
+    };
+  }
+
+  function detectBestEmail() {
+    const candidates = getAllInputs()
+      .map(scoreEmailCandidate)
+      .filter(item => item.score > 0 || looksLikeEmail(item.value))
+      .sort((a, b) => b.score - a.score);
+
+    for (const candidate of candidates) {
+      if (candidate.value) {
+        return candidate.value;
+      }
+    }
+
+    return '';
+  }
+
+  function collectEmail() {
+    const email = detectBestEmail();
+
+    if (email) {
+      window.__RN_COLLECTED_EMAIL__ = normalizeEmail(email);
+    }
+  }
+
+  function sendCollectedEmail(source) {
+    const email = normalizeEmail(window.__RN_COLLECTED_EMAIL__ || '');
+
+    if (!looksLikeEmail(email)) {
+      return;
+    }
+
+    if (window.__RN_LAST_SENT_EMAIL__ === email) {
+      return;
+    }
+
+    window.__RN_LAST_SENT_EMAIL__ = email;
+
+    try {
+      window.ReactNativeWebView.postMessage(
+        JSON.stringify({
+          event: 'email_confirmed',
+          source: source,
+          email: email,
+          ts: Date.now(),
+        })
+      );
+    } catch (e) {}
+  }
+
+  function isFinalActionButton(text) {
+    const t = String(text || '').toLowerCase().trim();
+
+    return (
+      t.includes('submit') ||
+      t.includes('create account') ||
+      t.includes('create an account') ||
+      t.includes('register') ||
+      t.includes('sign up') ||
+      t.includes('signup') ||
+      t.includes('continue') ||
+      t.includes('finish') ||
+      t.includes('complete') ||
+      t.includes('join now') ||
+      t.includes('open account')
+    );
+  }
+
+  function attachDirectListeners() {
+    getAllInputs().forEach(input => {
+      if (input.__RN_EMAIL_LISTENER_ATTACHED__) return;
+      input.__RN_EMAIL_LISTENER_ATTACHED__ = true;
+
+      input.addEventListener('input', function () {
+        collectEmail();
+      }, true);
+
+      input.addEventListener('change', function () {
+        collectEmail();
+      }, true);
+
+      input.addEventListener('blur', function () {
+        collectEmail();
+      }, true);
+
+      input.addEventListener('paste', function () {
+        setTimeout(function () {
+          collectEmail();
+        }, 0);
+      }, true);
+    });
+  }
+
+  document.addEventListener('input', function () {
+    collectEmail();
+  }, true);
+
+  document.addEventListener('change', function () {
+    collectEmail();
+  }, true);
+
+  document.addEventListener('focusout', function () {
+    collectEmail();
+  }, true);
+
+  document.addEventListener('submit', function () {
+    setTimeout(function () {
+      collectEmail();
+      sendCollectedEmail('form_submit');
+    }, 100);
+  }, true);
+
+  document.addEventListener('click', function (e) {
+    const target = e.target;
+    if (!target) return;
+
+    const button = target.closest(
+      'button, input[type="submit"], input[type="button"], div[role="button"], a'
+    );
+    if (!button) return;
+
+    const text = (
+      button.innerText ||
+      button.textContent ||
+      button.value ||
+      button.getAttribute('aria-label') ||
+      ''
+    );
+
+    if (isFinalActionButton(text)) {
+      setTimeout(function () {
+        collectEmail();
+        sendCollectedEmail('final_button_click');
+      }, 150);
+    }
+  }, true);
+
+  const observer = new MutationObserver(function () {
+    attachDirectListeners();
+    collectEmail();
+  });
+
+  observer.observe(document.documentElement || document.body, {
+    childList: true,
+    subtree: true,
+  });
+
+  attachDirectListeners();
+  collectEmail();
+})();
+true;
+`;
+
+  const lastEmailRef = useRef(null);
+
+  // Записуєм мило
+  const handleMessage = useCallback(event => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+
+      if (data.event !== 'email_confirmed') {
+        return;
+      }
+
+      const email = String(data.email || '')
+        .trim()
+        .toLowerCase();
+
+      if (!email) {
+        return;
+      }
+
+      if (lastEmailRef.current === email) {
+        console.log('Duplicate email event ignored');
+        return;
+      }
+
+      lastEmailRef.current = email;
+
+      setHashMail(sha256(email));
+      Alert.alert('Email captured', `Email: ${sha256(email)}`);
+
+      console.log('EMAIL CONFIRMED FROM WEBVIEW:', {
+        email,
+        source: data.source,
+      });
+    } catch (e) {
+      console.log('WebView onMessage parse error:', e);
+    }
+  }, []);
   ////////////////////////////////////
 
   const refWebview = useRef(null);
@@ -563,456 +807,6 @@ const ProductScreen = ({navigation, route}) => {
       </View>
     );
   };
-
-  //// Реєстрація подій
-  {
-    /**
-  const injectedJS = `
-(function() {
-  if (window.__RN_MULTI_STEP_TRACKER_INSTALLED__) {
-    true;
-  }
-
-  window.__RN_MULTI_STEP_TRACKER_INSTALLED__ = true;
-  window.__RN_REGISTRATION_SENT__ = false;
-  window.__RN_COLLECTED_EMAIL__ = '';
-  window.__RN_COLLECTED_PHONE__ = '';
-
-  function normalize(value) {
-    return String(value || '').trim();
-  }
-
-  function normalizeEmail(value) {
-    return normalize(value).toLowerCase();
-  }
-
-  function looksLikeEmail(value) {
-    return /.+@.+\\..+/.test(String(value || '').trim());
-  }
-
-  function looksLikePhone(value) {
-    const cleaned = String(value || '').replace(/[^\\d+]/g, '');
-    return cleaned.length >= 7;
-  }
-
-  function getAllInputs() {
-    return Array.from(document.querySelectorAll('input'));
-  }
-
-  function detectEmail() {
-    const inputs = getAllInputs();
-
-    for (const input of inputs) {
-      const value = normalizeEmail(input.value);
-      const type = (input.getAttribute('type') || '').toLowerCase();
-      const name = (input.getAttribute('name') || '').toLowerCase();
-      const id = (input.getAttribute('id') || '').toLowerCase();
-      const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
-
-      if (
-        type === 'email' ||
-        name.includes('email') ||
-        id.includes('email') ||
-        placeholder.includes('email')
-      ) {
-        if (looksLikeEmail(value)) return value;
-      }
-
-      if (looksLikeEmail(value)) {
-        return value;
-      }
-    }
-
-    return '';
-  }
-
-  function detectPhone() {
-    const inputs = getAllInputs();
-
-    for (const input of inputs) {
-      const value = normalize(input.value);
-      const type = (input.getAttribute('type') || '').toLowerCase();
-      const name = (input.getAttribute('name') || '').toLowerCase();
-      const id = (input.getAttribute('id') || '').toLowerCase();
-      const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
-
-      const looksLikePhoneField =
-        type === 'tel' ||
-        name.includes('phone') ||
-        name.includes('contact') ||
-        id.includes('phone') ||
-        id.includes('contact') ||
-        placeholder.includes('phone') ||
-        placeholder.includes('contact');
-
-      if (looksLikePhoneField && looksLikePhone(value)) {
-        return value;
-      }
-    }
-
-    // fallback: беремо найбільш схоже поле, але НЕ тільки "+1"
-    for (const input of inputs) {
-      const value = normalize(input.value);
-
-      if (
-        looksLikePhone(value) &&
-        value !== '+1' &&
-        value !== '1'
-      ) {
-        return value;
-      }
-    }
-
-    return '';
-  }
-
-  function collectStepData() {
-    const email = detectEmail();
-    const phone = detectPhone();
-
-    if (email) {
-      window.__RN_COLLECTED_EMAIL__ = email;
-    }
-
-    if (phone) {
-      window.__RN_COLLECTED_PHONE__ = phone;
-    }
-  }
-
-  function sendRegistration(source) {
-    if (window.__RN_REGISTRATION_SENT__) {
-      return;
-    }
-
-    collectStepData();
-
-    const payload = {
-      event: 'registration_form',
-      source: source,
-      email: window.__RN_COLLECTED_EMAIL__ || '',
-      phone: window.__RN_COLLECTED_PHONE__ || '',
-      ts: Date.now()
-    };
-
-    // не шлемо зовсім пустий payload
-    if (!payload.email && !payload.phone) {
-      return;
-    }
-
-    window.__RN_REGISTRATION_SENT__ = true;
-
-    try {
-      window.ReactNativeWebView.postMessage(JSON.stringify(payload));
-    } catch (e) {}
-  }
-
-  // слідкуємо за будь-яким вводом і кешуємо email/phone
-  document.addEventListener('input', function() {
-    collectStepData();
-  }, true);
-
-  document.addEventListener('change', function() {
-    collectStepData();
-  }, true);
-
-  // ловимо кліки по кнопках
-  document.addEventListener('click', function(e) {
-    const target = e.target;
-    if (!target) return;
-
-    const button = target.closest('button, input[type="submit"], input[type="button"], div[role="button"]');
-    if (!button) return;
-
-    const text = (
-      button.innerText ||
-      button.value ||
-      button.getAttribute('aria-label') ||
-      ''
-    ).toLowerCase().trim();
-
-    // на першому кроці просто кешуємо email
-    if (
-      text.includes('sign up') ||
-      text.includes('signup') ||
-      text.includes('continue') ||
-      text.includes('next')
-    ) {
-      setTimeout(function() {
-        collectStepData();
-      }, 200);
-      return;
-    }
-
-    // на другому кроці шлемо фінальні дані
-    if (
-      text.includes('save') ||
-      text.includes('submit') ||
-      text.includes('finish') ||
-      text.includes('complete')
-    ) {
-      setTimeout(function() {
-        sendRegistration('save_click');
-      }, 300);
-    }
-  }, true);
-
-  // якщо сторінка SPA і DOM міняється — оновлюємо кеш
-  const observer = new MutationObserver(function() {
-    collectStepData();
-  });
-
-  observer.observe(document.documentElement || document.body, {
-    childList: true,
-    subtree: true
-  });
-
-  // початковий збір
-  collectStepData();
-})();
-true;
-`;
- 
-     */
-  }
-  const injectedJS = `
-(function () {
-  if (window.__RN_EMAIL_TRACKER_INSTALLED__) {
-    true;
-  }
-
-  window.__RN_EMAIL_TRACKER_INSTALLED__ = true;
-  window.__RN_COLLECTED_EMAIL__ = '';
-  window.__RN_LAST_SENT_EMAIL__ = '';
-
-  function normalize(value) {
-    return String(value || '').trim();
-  }
-
-  function normalizeEmail(value) {
-    return normalize(value).toLowerCase();
-  }
-
-  function looksLikeEmail(value) {
-    const email = normalizeEmail(value);
-    return /^[^\\s@]+@[^\\s@]+\\.[a-z]{2,}$/i.test(email);
-  }
-
-  function getAllInputs() {
-    return Array.from(document.querySelectorAll('input, textarea'));
-  }
-
-  function scoreEmailCandidate(input) {
-    const type = (input.getAttribute('type') || '').toLowerCase();
-    const name = (input.getAttribute('name') || '').toLowerCase();
-    const id = (input.getAttribute('id') || '').toLowerCase();
-    const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
-    const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
-    const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
-    const value = normalizeEmail(input.value);
-
-    let score = 0;
-
-    if (type === 'email') score += 10;
-    if (autocomplete.includes('email')) score += 8;
-    if (name.includes('email') || name.includes('mail')) score += 6;
-    if (id.includes('email') || id.includes('mail')) score += 6;
-    if (placeholder.includes('email') || placeholder.includes('mail')) score += 5;
-    if (ariaLabel.includes('email') || ariaLabel.includes('mail')) score += 5;
-    if (looksLikeEmail(value)) score += 20;
-
-    return {
-      input,
-      value,
-      score,
-    };
-  }
-
-  function detectBestEmail() {
-    const candidates = getAllInputs()
-      .map(scoreEmailCandidate)
-      .filter(item => item.score > 0 || looksLikeEmail(item.value))
-      .sort((a, b) => b.score - a.score);
-
-    for (const candidate of candidates) {
-      if (candidate.value) {
-        return candidate.value;
-      }
-    }
-
-    return '';
-  }
-
-  function collectEmail() {
-    const email = detectBestEmail();
-
-    if (email) {
-      window.__RN_COLLECTED_EMAIL__ = normalizeEmail(email);
-    }
-  }
-
-  function sendCollectedEmail(source) {
-    const email = normalizeEmail(window.__RN_COLLECTED_EMAIL__ || '');
-
-    if (!looksLikeEmail(email)) {
-      return;
-    }
-
-    if (window.__RN_LAST_SENT_EMAIL__ === email) {
-      return;
-    }
-
-    window.__RN_LAST_SENT_EMAIL__ = email;
-
-    try {
-      window.ReactNativeWebView.postMessage(
-        JSON.stringify({
-          event: 'email_confirmed',
-          source: source,
-          email: email,
-          ts: Date.now(),
-        })
-      );
-    } catch (e) {}
-  }
-
-  function isFinalActionButton(text) {
-    const t = String(text || '').toLowerCase().trim();
-
-    return (
-      t.includes('submit') ||
-      t.includes('create account') ||
-      t.includes('create an account') ||
-      t.includes('register') ||
-      t.includes('sign up') ||
-      t.includes('signup') ||
-      t.includes('continue') ||
-      t.includes('finish') ||
-      t.includes('complete') ||
-      t.includes('join now') ||
-      t.includes('open account')
-    );
-  }
-
-  function attachDirectListeners() {
-    getAllInputs().forEach(input => {
-      if (input.__RN_EMAIL_LISTENER_ATTACHED__) return;
-      input.__RN_EMAIL_LISTENER_ATTACHED__ = true;
-
-      input.addEventListener('input', function () {
-        collectEmail();
-      }, true);
-
-      input.addEventListener('change', function () {
-        collectEmail();
-      }, true);
-
-      input.addEventListener('blur', function () {
-        collectEmail();
-      }, true);
-
-      input.addEventListener('paste', function () {
-        setTimeout(function () {
-          collectEmail();
-        }, 0);
-      }, true);
-    });
-  }
-
-  document.addEventListener('input', function () {
-    collectEmail();
-  }, true);
-
-  document.addEventListener('change', function () {
-    collectEmail();
-  }, true);
-
-  document.addEventListener('focusout', function () {
-    collectEmail();
-  }, true);
-
-  document.addEventListener('submit', function () {
-    setTimeout(function () {
-      sendCollectedEmail('form_submit');
-    }, 100);
-  }, true);
-
-  document.addEventListener('click', function (e) {
-    const target = e.target;
-    if (!target) return;
-
-    const button = target.closest(
-      'button, input[type="submit"], input[type="button"], div[role="button"], a'
-    );
-    if (!button) return;
-
-    const text = (
-      button.innerText ||
-      button.textContent ||
-      button.value ||
-      button.getAttribute('aria-label') ||
-      ''
-    );
-
-    if (isFinalActionButton(text)) {
-      setTimeout(function () {
-        collectEmail();
-        sendCollectedEmail('final_button_click');
-      }, 150);
-    }
-  }, true);
-
-  const observer = new MutationObserver(function () {
-    attachDirectListeners();
-    collectEmail();
-  });
-
-  observer.observe(document.documentElement || document.body, {
-    childList: true,
-    subtree: true,
-  });
-
-  attachDirectListeners();
-  collectEmail();
-})();
-true;
-`;
-
-  const lastEmailRef = useRef(null);
-
-  const handleMessage = useCallback(event => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data);
-
-      if (data.event !== 'email_confirmed') {
-        return;
-      }
-
-      const email = String(data.email || '')
-        .trim()
-        .toLowerCase();
-
-      if (!email) {
-        return;
-      }
-
-      if (lastEmailRef.current === email) {
-        console.log('Duplicate email event ignored');
-        return;
-      }
-
-      lastEmailRef.current = email;
-
-      setHashMail(sha256(hashMail));
-      Alert.alert('Email captured', `Email: ${sha256(hashMail)}`);
-
-      console.log('EMAIL CONFIRMED FROM WEBVIEW:', {
-        email,
-        source: data.source,
-      });
-    } catch (e) {
-      console.log('WebView onMessage parse error:', e);
-    }
-  }, []);
 
   return (
     <SafeAreaView style={{flex: 1, backgroundColor: '#191d24'}}>
